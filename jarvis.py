@@ -3,12 +3,9 @@ import sys
 import subprocess
 import webbrowser
 import datetime
-import threading
 import time
-import json
 import re
 from typing import Optional
-
 
 try:
     import speech_recognition as sr
@@ -23,16 +20,15 @@ except ImportError:
     TTS_AVAILABLE = False
 
 try:
-    import anthropic
+    import google.generativeai as genai
     AI_AVAILABLE = True
 except ImportError:
     AI_AVAILABLE = False
 
+WAKE_WORD = "jarvis"
+GEMINI_KEY = "" # api key
 
-WAKE_WORD   = "jarvis"
-ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-
-SYSTEM_PROMPT = """You are J.A.R.V.I.S., Tony Stark's AI assistant.
+SYSTEM_PROMPT = """You are jarvis, Meet Singh's AI assistant.
 Respond concisely (1-2 sentences max), with dry wit and intelligence.
 Address the user as "Boss" occasionally. Never break character.
 For app/web commands you don't handle yourself, just confirm the action naturally."""
@@ -46,7 +42,7 @@ class Speaker:
                 self.engine = pyttsx3.init()
                 voices = self.engine.getProperty('voices')
                 for v in voices:
-                    if 'daniel' in v.name.lower() or 'alex' in v.name.lower():
+                    if 'John' in v.name.lower() or 'Cena' in v.name.lower() or 'Undertaker' in v.name.lower():
                         self.engine.setProperty('voice', v.id)
                         break
                 self.engine.setProperty('rate', 185)
@@ -56,15 +52,20 @@ class Speaker:
 
     def say(self, text):
         print(f"\n🤖 JARVIS: {text}")
+        escaped = text.replace('"', '\\"')
         if self.engine:
             try:
                 self.engine.say(text)
                 self.engine.runAndWait()
             except Exception:
-                os.system(f'say -v Daniel "{text}"')
+                os.system(f'say -v John "{escaped}"')
         else:
-            os.system(f'say -v Daniel "{text}"')
+            os.system(f'say -v John "{escaped}"')
 
+def _fallback_say(self, text):
+    """Fallback mit verbesserter Text-Escaping"""
+    escaped_text = text.replace('"', '\\"').replace("'", "\\'")
+    os.system(f'say -v John "{escaped_text}"')
 
 class Launcher:
     APP_MAP = {
@@ -114,10 +115,7 @@ class Launcher:
     def open_app(self, name):
         app = self.APP_MAP.get(name.lower())
         if app:
-            result = subprocess.run(
-                ["open", "-a", app],
-                capture_output=True, text=True
-            )
+            result = subprocess.run(["open", "-a", app], capture_output=True, text=True)
             if result.returncode == 0:
                 return f"Opening {app}, Boss."
             return f"I couldn't find {app} on this system."
@@ -194,30 +192,23 @@ class IntentParser:
 class Brain:
     def __init__(self):
         self.client = None
-        self.history = []
-        if AI_AVAILABLE and ANTHROPIC_KEY:
-            self.client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        self.chat = None
+        if AI_AVAILABLE and GEMINI_KEY:
+            genai.configure(api_key=GEMINI_KEY)
+            self.client = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                system_instruction=SYSTEM_PROMPT
+            )
+            self.chat = self.client.start_chat(history=[])
 
     def think(self, user_input):
         if not self.client:
-            return "My AI core is offline. Set ANTHROPIC_API_KEY to enable it, Boss."
-
-        self.history.append({"role": "user", "content": user_input})
-        if len(self.history) > 20:
-            self.history = self.history[-20:]
-
+            return "My AI core is offline. Check your GEMINI_KEY, Boss."
         try:
-            response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=200,
-                system=SYSTEM_PROMPT,
-                messages=self.history,
-            )
-            reply = response.content[0].text
-            self.history.append({"role": "assistant", "content": reply})
-            return reply
+            response = self.chat.send_message(user_input)
+            return response.text
         except Exception as e:
-            return f"I encountered an error in my neural network: {str(e)[:60]}"
+            return f"Neural network error: {str(e)[:60]}"
 
 
 class Listener:
@@ -234,10 +225,10 @@ class Listener:
         try:
             with sr.Microphone() as source:
                 self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                print("🎤 Listening...", flush=True)
+                print("Listening...", flush=True)
                 audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=10)
             text = self.recognizer.recognize_google(audio, language="de-DE,en-US")
-            print(f"👤 You said: {text}")
+            print(f"You said: {text}")
             return text.lower()
         except sr.WaitTimeoutError:
             return None
@@ -263,8 +254,8 @@ class JARVIS:
         self.speaker.say(response)
 
     def run_voice(self):
-        self.speaker.say("J.A.R.V.I.S. online. All systems nominal. Awaiting your command, Boss.")
-        print(f"\n🟢 Wake word: say '{WAKE_WORD}' to activate\n")
+        self.speaker.say("Jarvis. online. All systems nominal. Awaiting your command, Boss.")
+        print(f"\n Wake word: say '{WAKE_WORD}' to activate\n")
         while True:
             text = self.listener.listen()
             if text and WAKE_WORD in text:
@@ -276,14 +267,14 @@ class JARVIS:
                     self.handle(command)
 
     def run_text(self):
-        self.speaker.say("J.A.R.V.I.S. online. Text mode active.")
+        self.speaker.say("Jarvis. online. Text mode active.")
         print("\n" + "═"*50)
-        print("  J.A.R.V.I.S. — Text Mode")
+        print("  Jarvis. — Text Mode")
         print("  Type your command. 'quit' to exit.")
         print("═"*50 + "\n")
         while True:
             try:
-                text = input("👤 You: ").strip()
+                text = input("You: ").strip()
                 if not text:
                     continue
                 if text.lower() in ("quit", "exit", "bye"):
@@ -302,7 +293,7 @@ def main():
         mode = "voice"
     if mode == "voice":
         if not SR_AVAILABLE:
-            print("⚠  speech_recognition not installed. Falling back to text mode.")
+            print("speech_recognition not installed. Falling back to text mode.")
             jarvis.run_text()
         else:
             jarvis.run_voice()
